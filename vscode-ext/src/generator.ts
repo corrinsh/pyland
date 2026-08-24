@@ -506,9 +506,10 @@ export function genBatch(
   chapterFilter?: string | string[],
   recentHashes: string[] = [],
 ): Question[] {
-  const chs: string[] | null = !chapterFilter
-    ? null
-    : Array.isArray(chapterFilter) ? chapterFilter : [chapterFilter];
+  const chs: string[] | null =
+    !chapterFilter || (Array.isArray(chapterFilter) && chapterFilter.length === 0)
+      ? null
+      : Array.isArray(chapterFilter) ? chapterFilter : [chapterFilter];
   const pool = TEMPLATES.filter(t =>
     (!chs || chs.includes(t.chapter)) &&
     (mode === "all" || t.kind === mode),
@@ -517,14 +518,16 @@ export function genBatch(
 
   const seen = new Set(recentHashes);
   const out: Question[] = [];
+  // 池子小就放宽单模板批次上限，否则 3 模板的池子最多只能出 6 题
+  const perTplMax = pool.length >= 8 ? 2 : Math.max(2, Math.ceil(count / pool.length));
   const usedTplCount = new Map<string, number>();
   let attempts = 0;
 
   while (out.length < count && attempts < count * 30) {
     attempts++;
     const tpl = pick(pool);
-    // 一批内同模板最多 2 次，逼出多样性
-    if ((usedTplCount.get(tpl.id) || 0) >= 2) continue;
+    // 一批内同模板的上限根据池子大小自适应
+    if ((usedTplCount.get(tpl.id) || 0) >= perTplMax) continue;
     const q = tpl.gen();
     const h = genHash(q);
     if (seen.has(h)) continue;

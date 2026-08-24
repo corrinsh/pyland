@@ -79,8 +79,13 @@ export class PracticeViewManager {
       case "startGen": {
         this.questions = genBatch(msg.mode, PRACTICE_COUNT, msg.chapterIds, this.recentHashes);
         if (this.questions.length === 0) {
-          vscode.window.showWarningMessage("出题器没出够题，换个组合试试。");
+          vscode.window.showWarningMessage("没匹配到出题模板，换个章节或题型试试。");
           return;
+        }
+        if (this.questions.length < PRACTICE_COUNT) {
+          vscode.window.showInformationMessage(
+            `这组合下只匹配到 ${this.questions.length} 题（要 ${PRACTICE_COUNT} 题），开练！`,
+          );
         }
         const modeName = msg.mode === "theory" ? "理论卷" : msg.mode === "code" ? "实操卷" : "混合卷";
         const chName = msg.chapterIds.length > 0
