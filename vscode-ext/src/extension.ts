@@ -1,17 +1,20 @@
 import * as vscode from "vscode";
 import { ChapterTreeProvider } from "./treeView";
 import { LessonViewManager } from "./lessonView";
+import { PracticeViewManager } from "./practiceView";
 import { ProgressManager } from "./progress";
 
 let pm: ProgressManager;
 let treeProvider: ChapterTreeProvider;
 let lessonView: LessonViewManager;
+let practiceView: PracticeViewManager;
 
 /** 扩展激活入口 */
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   pm = new ProgressManager(ctx);
   treeProvider = new ChapterTreeProvider(pm);
   lessonView = new LessonViewManager(ctx, pm);
+  practiceView = new PracticeViewManager(ctx);
 
   // 侧边栏树视图
   vscode.window.registerTreeDataProvider("pyland.chapterTree", treeProvider);
@@ -42,6 +45,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("pyland.openMap", () => {
       vscode.commands.executeCommand("workbench.view.extension.pyland-sidebar");
       treeProvider.refresh();
+    }),
+  );
+
+  // 命令：打开训练场
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("pyland.openArena", () => {
+      practiceView.openArena();
     }),
   );
 
@@ -140,15 +150,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 监听文件保存——如果是 pyland 练习文件，自动检查
   ctx.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((doc) => {
-      if (doc.fileName.includes("pyland-exercises") && doc.fileName.endsWith(".py")) {
+      if (!doc.fileName.endsWith(".py")) return;
+      // 关卡练习文件：pyland-exercises/l1_q1.py
+      if (doc.fileName.includes("pyland-exercises")) {
         const m = doc.fileName.match(/_q(\d+)\.py$/);
         if (m && lessonView.activeLevelId) {
-          const qIdx = parseInt(m[1], 10) - 1;
-          // 延迟一点让文件写完
           setTimeout(() => {
             vscode.commands.executeCommand("pyland.checkCode");
           }, 200);
         }
+        return;
+      }
+      // 训练场练习文件：pyland-exercises/practice_q1.py
+      if (/practice_q\d+\.py$/.test(doc.fileName)) {
+        setTimeout(() => {
+          void practiceView.checkActiveByFile(doc.fileName);
+        }, 200);
       }
     }),
   );

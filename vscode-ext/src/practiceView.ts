@@ -1,0 +1,373 @@
+import * as vscode from "vscode";
+import * as path from "path";
+import * as fs from "fs";
+import { COURSES, findLevel } from "./courses";
+import type { Question } from "./types";
+import { genBatch, pickFromLevel } from "./generator";
+import { quizCSS, quizScript, questionHTML, escape, escapeCode } from "./quizRender";
+import { runAndCheck } from "./checker";
+
+/** Webview 消息协议（训练场） */
+type ArenaMsg =
+  | { cmd: "startLevelPractice"; levelId: string }
+  | { cmd: "startGen"; mode: "theory" | "code" | "all"; chapterId?: string }
+  | { cmd: "openPlayground" }
+  | { cmd: "answer"; qIdx: number; correct: boolean; picked: string }
+  | { cmd: "openCode"; qIdx: number }
+  | { cmd: "checkCode"; qIdx: number }
+  | { cmd: "hint"; qIdx: number }
+  | { cmd: "backToMenu" };
+
+const PRACTICE_COUNT = 10;
+
+/** 训练场管理器 */
+export class PracticeViewManager {
+  private panel: vscode.WebviewPanel | null = null;
+  private questions: Question[] = [];
+  private results = new Map<number, boolean>();
+  private codeFiles = new Map<number, string>();
+  private recentHashes: string[] = [];
+  private sessionLabel = "";
+
+  constructor(private ctx: vscode.ExtensionContext) {}
+
+  /** 打开训练场（菜单页） */
+  openArena(): void {
+    if (this.panel) {
+      this.panel.reveal();
+      this.renderMenu();
+      return;
+    }
+    this.panel = vscode.window.createWebviewPanel(
+      "pyland.arena",
+      "🏋️ 实操训练场",
+      vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true },
+    );
+    this.panel.webview.onDidReceiveMessage(
+      (msg: ArenaMsg) => this.handleMessage(msg),
+      undefined,
+      this.ctx.subscriptions,
+    );
+    this.panel.onDidDispose(() => { this.panel = null; });
+    this.renderMenu();
+  }
+
+  /** 供 onDidSaveTextDocument 调用：检查当前练习的 code 题 */
+  async checkActiveByFile(fileName: string): Promise<boolean> {
+    const m = fileName.match(/practice_q(\d+)\.py$/);
+    if (!m || !this.panel || this.questions.length === 0) return false;
+    await this.checkCode(parseInt(m[1], 10) - 1);
+    return true;
+  }
+
+  private async handleMessage(msg: ArenaMsg): Promise<void> {
+    switch (msg.cmd) {
+      case "startLevelPractice": {
+        const found = findLevel(msg.levelId);
+        if (!found) return;
+        this.questions = pickFromLevel(found.level.questions, PRACTICE_COUNT);
+        this.sessionLabel = `关卡练习 · ${found.level.icon} ${found.level.title}`;
+        this.startSession();
+        break;
+      }
+      case "startGen": {
+        this.questions = genBatch(msg.mode, PRACTICE_COUNT, msg.chapterId, this.recentHashes);
+        if (this.questions.length === 0) {
+          vscode.window.showWarningMessage("出题器没出够题，换个模式试试。");
+          return;
+        }
+        const modeName = msg.mode === "theory" ? "理论卷" : msg.mode === "code" ? "实操卷" : "混合卷";
+        const chName = msg.chapterId ? COURSES.find(c => c.id === msg.chapterId)?.title + " · " : "";
+        this.sessionLabel = `无限出题 · ${chName}${modeName}`;
+        this.startSession();
+        break;
+      }
+      case "openPlayground":
+        await this.openPlayground();
+        break;
+      case "answer":
+        this.results.set(msg.qIdx, msg.correct);
+        break;
+      case "openCode":
+        await this.openCodeFile(msg.qIdx);
+        break;
+      case "checkCode":
+        await this.checkCode(msg.qIdx);
+        break;
+      case "hint":
+        this.showHint(msg.qIdx);
+        break;
+      case "backToMenu":
+        this.renderMenu();
+        break;
+    }
+  }
+
+  private startSession(): void {
+    this.results = new Map();
+    this.codeFiles = new Map();
+    // 记录指纹（去重窗口，保留最近 60）
+    for (const q of this.questions) {
+      const h = JSON.stringify([q.type, q.q, q.code, q.expected]);
+      this.recentHashes.push(h);
+    }
+    if (this.recentHashes.length > 60) {
+      this.recentHashes = this.recentHashes.slice(-60);
+    }
+    this.renderQuiz();
+  }
+
+  /** 创建/打开 code 题练习文件 */
+  private async openCodeFile(qIdx: number): Promise<void> {
+    if (!this.panel) return;
+    const q = this.questions[qIdx];
+    if (!q || q.type !== "code") return;
+
+    const config = vscode.workspace.getConfiguration("pyland");
+    const dirName = config.get<string>("exerciseDir", "pyland-exercises");
+
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage("请先打开一个文件夹（工作区），PyLand 需要在其中创建练习文件。");
+      return;
+    }
+
+    const dirPath = path.join(wsFolder.uri.fsPath, dirName);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+
+    const fileName = `practice_q${qIdx + 1}.py`;
+    const filePath = path.join(dirPath, fileName);
+
+    const header = `# ═══════════════════════════════════════════════════════════
+# PyLand 训练场 · ${this.sessionLabel} · 第 ${qIdx + 1} 题
+# ═══════════════════════════════════════════════════════════
+# ${q.q.replace(/\n/g, "\n# ")}
+# 期望输出:
+${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
+# ═══════════════════════════════════════════════════════════
+# ↓↓↓ 在下面写你的代码 ↓↓↓
+
+`;
+    const content = header + (q.starter || "");
+
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, content, "utf8");
+    }
+
+    this.codeFiles.set(qIdx, filePath);
+
+    const doc = await vscode.workspace.openTextDocument(filePath);
+    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Two);
+
+    this.panel.webview.postMessage({ cmd: "codeFileOpened", qIdx, fileName });
+  }
+
+  /** 检查练习 code 题 */
+  private async checkCode(qIdx: number): Promise<void> {
+    if (!this.panel) return;
+    const q = this.questions[qIdx];
+    if (!q || q.type !== "code" || !q.expected) return;
+
+    const filePath = this.codeFiles.get(qIdx);
+    if (!filePath || !fs.existsSync(filePath)) {
+      await this.openCodeFile(qIdx);
+    }
+    const actualPath = this.codeFiles.get(qIdx);
+    if (!actualPath) return;
+
+    const config = vscode.workspace.getConfiguration("pyland");
+    const pythonPath = config.get<string>("pythonPath", "python");
+
+    this.panel.webview.postMessage({ cmd: "checking", qIdx });
+
+    const result = await runAndCheck(pythonPath, actualPath, q.expected);
+
+    if (result.passed) {
+      this.results.set(qIdx, true);
+    }
+
+    this.panel.webview.postMessage({ cmd: "checkResult", qIdx, result });
+  }
+
+  private showHint(qIdx: number): void {
+    const q = this.questions[qIdx];
+    if (!q) return;
+    vscode.window.showInformationMessage(`💡 提示：${q.explain}`);
+  }
+
+  /** 自由编码台：打开 playground.py */
+  private async openPlayground(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage("请先打开一个文件夹（工作区）。");
+      return;
+    }
+    const filePath = path.join(wsFolder.uri.fsPath, "playground.py");
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, "# PyLand 自由编码台——随便写，Ctrl+F5 跑起来\n# 试试：\n# print('hello')\n\n", "utf8");
+    }
+    const doc = await vscode.workspace.openTextDocument(filePath);
+    await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+    vscode.window.showInformationMessage("⌨️ 自由编码台已打开——写完点右上角 ▶ 运行，或右键「在终端中运行 Python 文件」。");
+  }
+
+  /* ═══════════ 渲染 ═══════════ */
+
+  private renderMenu(): void {
+    if (!this.panel) return;
+    const chaptersHTML = COURSES.filter(c => !c.locked && c.levels.length > 0).map(ch => `
+      <div class="ch-block">
+        <div class="ch-title">${escape(ch.no)} · ${escape(ch.title)} <span class="ch-sub">${escape(ch.sub)}</span></div>
+        <div class="lv-grid">
+          ${ch.levels.map(lv => `
+            <button class="lv-btn" onclick="startLevelPractice('${lv.id}')">
+              <span class="lv-icon">${lv.icon}</span>
+              <span class="lv-name">${escape(lv.title)}</span>
+              <span class="lv-desc">${escape(lv.desc)}</span>
+            </button>`).join("")}
+        </div>
+      </div>`).join("");
+
+    this.panel.webview.html = /*html*/ `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><style>
+${quizCSS()}
+.arena-header { border-bottom: 2px solid var(--accent); padding-bottom: 14px; margin-bottom: 20px; }
+.arena-header h1 { font-size: 22px; }
+.arena-header .sub { color: var(--vscode-descriptionForeground); font-size: 13px; margin-top: 4px; }
+.mode-card {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 20px; margin-bottom: 16px;
+}
+.mode-card h2 { font-size: 16px; color: var(--accent); margin-bottom: 8px; }
+.mode-card .desc { font-size: 13px; color: var(--vscode-descriptionForeground); margin-bottom: 12px; }
+.gen-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.gen-btn {
+  background: var(--accent2); color: #fff; border: none; border-radius: 6px;
+  padding: 8px 18px; cursor: pointer; font-size: 14px; font-family: inherit;
+}
+.gen-btn:hover { opacity: 0.85; }
+.gen-btn.warm { background: var(--accent); }
+.gen-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+.ch-block { margin-bottom: 6px; }
+.ch-title { font-weight: bold; font-size: 14px; margin: 10px 0 8px; }
+.ch-sub { font-weight: normal; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.lv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.lv-btn {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; cursor: pointer; text-align: left; color: var(--fg);
+  font-family: inherit; transition: all 0.15s;
+}
+.lv-btn:hover { border-color: var(--accent); background: rgba(232,112,58,0.08); }
+.lv-icon { font-size: 20px; margin-right: 6px; }
+.lv-name { font-size: 14px; font-weight: bold; }
+.lv-desc { display: block; font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+.hint-line { font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 6px; }
+</style></head>
+<body>
+<div class="arena-header">
+  <h1>🏋️ 实操训练场</h1>
+  <div class="sub">想刷实操就刷实操，想闯关就闯关——这里不计 XP、不影响关卡进度，随便练。</div>
+</div>
+
+<div class="mode-card">
+  <h2>🤖 无限出题器</h2>
+  <div class="desc">参数化出题，每次都是新题，重复率极低。一批 ${PRACTICE_COUNT} 题。</div>
+  <div class="gen-row">
+    <button class="gen-btn warm" onclick="startGen('all')">🎲 混合卷</button>
+    <button class="gen-btn" onclick="startGen('theory')">📖 理论卷</button>
+    <button class="gen-btn" onclick="startGen('code')">⌨️ 实操卷</button>
+  </div>
+  <div class="gen-row" style="margin-top:8px">
+    <button class="gen-btn ghost" onclick="startGen('all','ch1')">一章混合</button>
+    <button class="gen-btn ghost" onclick="startGen('all','ch2')">二章混合</button>
+    <button class="gen-btn ghost" onclick="startGen('all','ch3')">三章混合</button>
+  </div>
+  <div class="hint-line">出过的题会记住指纹——连刷多批基本不撞题。</div>
+</div>
+
+<div class="mode-card">
+  <h2>📖 关卡针对性练习</h2>
+  <div class="desc">从指定关卡的原题里随机抽 ${PRACTICE_COUNT} 题乱序练。哪关薄弱练哪关。</div>
+  ${chaptersHTML}
+</div>
+
+<div class="mode-card">
+  <h2>⌨️ 自由编码台</h2>
+  <div class="desc">无题目无分数，打开 playground.py 随便写随便跑。</div>
+  <button class="gen-btn" onclick="openPlayground()">打开自由编码台</button>
+</div>
+
+<script>
+const vscode = acquireVsCodeApi();
+function startLevelPractice(levelId) { vscode.postMessage({ cmd: 'startLevelPractice', levelId }); }
+function startGen(mode, chapterId) { vscode.postMessage({ cmd: 'startGen', mode, chapterId }); }
+function openPlayground() { vscode.postMessage({ cmd: 'openPlayground' }); }
+</script>
+</body>
+</html>`;
+  }
+
+  private renderQuiz(): void {
+    if (!this.panel) return;
+    const questionsHTML = this.questions.map((q, i) => questionHTML(q, i)).join("\n");
+
+    this.panel.webview.html = /*html*/ `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><style>
+${quizCSS()}
+.quiz-header { border-bottom: 2px solid var(--accent); padding-bottom: 14px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+.quiz-header h1 { font-size: 18px; }
+.quiz-header .score { font-size: 14px; color: var(--vscode-descriptionForeground); }
+.quiz-header .score strong { color: var(--ok); }
+.back-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 14px; color: var(--fg); cursor: pointer; font-size: 13px; font-family: inherit;
+}
+.back-btn:hover { border-color: var(--accent); }
+.done-banner {
+  display: none; background: rgba(78,201,176,0.12); border: 1px solid var(--ok);
+  border-radius: 8px; padding: 14px 20px; margin-bottom: 16px; font-size: 15px;
+}
+.done-banner.show { display: block; }
+</style></head>
+<body>
+<div class="quiz-header">
+  <div>
+    <h1>🎯 ${escape(this.sessionLabel)}</h1>
+    <div class="score">答对 <strong id="okCount">0</strong> / 已答 <span id="doneCount">0</span> / 共 ${this.questions.length} 题</div>
+  </div>
+  <button class="back-btn" onclick="backToMenu()">← 返回训练场</button>
+</div>
+<div class="done-banner" id="doneBanner">🎉 本组完成！<span id="finalScore"></span> —— 点右上角「返回训练场」再来一组新题。</div>
+<div class="questions">${questionsHTML}</div>
+<script>
+${quizScript()}
+
+window.__pylandOnAnswer = function(qIdx, correct) {
+  updateScore();
+};
+function updateScore() {
+  const cards = document.querySelectorAll('.q-card');
+  let done = 0, ok = 0;
+  cards.forEach(c => {
+    const fb = c.querySelector('.feedback');
+    if (fb && (fb.classList.contains('ok') || fb.classList.contains('bad'))) done++;
+    if (fb && fb.classList.contains('ok')) ok++;
+  });
+  document.getElementById('doneCount').textContent = done;
+  document.getElementById('okCount').textContent = ok;
+  if (done >= ${this.questions.length}) {
+    document.getElementById('doneBanner').className = 'done-banner show';
+    document.getElementById('finalScore').textContent = '答对 ' + ok + ' / ' + ${this.questions.length};
+  }
+}
+function backToMenu() { vscode.postMessage({ cmd: 'backToMenu' }); }
+</script>
+</body>
+</html>`;
+  }
+}

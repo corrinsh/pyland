@@ -3,7 +3,7 @@ import { COURSES } from "./courses";
 import type { ProgressManager } from "./progress";
 
 /** 树节点类型 */
-type NodeType = "chapter" | "lesson";
+type NodeType = "chapter" | "lesson" | "arena";
 
 interface TreeNode {
   type: NodeType;
@@ -24,7 +24,17 @@ class PyLandTreeItem extends vscode.TreeItem {
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.None);
 
-    this.contextValue = node.type === "lesson" ? "lesson" : "chapter";
+    this.contextValue = node.type;
+
+    if (node.type === "arena") {
+      this.iconPath = new vscode.ThemeIcon("zap");
+      this.description = node.desc || "";
+      this.command = {
+        command: "pyland.openArena",
+        title: "打开训练场",
+      };
+      return;
+    }
 
     if (node.type === "lesson") {
       // 图标状态：✓ 已过 / 🔒 未解锁 / 正常 icon
@@ -65,14 +75,20 @@ export class ChapterTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   getChildren(element?: TreeNode): TreeNode[] {
     if (!element) {
-      // 顶层：章节列表
-      return COURSES.map(ch => ({
+      // 顶层：训练场入口 + 章节列表
+      const arena: TreeNode = {
+        type: "arena",
+        id: "arena",
+        label: "🏋️ 实操训练场",
+        desc: "无限出题 · 关卡练习 · 自由编码",
+      };
+      return [arena, ...COURSES.map(ch => ({
         type: "chapter" as NodeType,
         id: ch.id,
         label: `${ch.no} · ${ch.title}`,
         desc: ch.locked ? ch.sub : ch.sub,
         locked: ch.locked,
-      }));
+      }))];
     }
 
     if (element.type === "chapter") {

@@ -2,7 +2,7 @@
   "name": "pyland",
   "displayName": "PyLand - Python 冒险学院",
   "description": "零基础 Python 游戏化学习：章节地图 + 真编辑器写代码 + 一键检查判完成",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "corrin",
   "engines": {
     "vscode": "^1.80.0"
@@ -67,6 +67,10 @@
       {
         "command": "pyland.openMap",
         "title": "PyLand: 打开冒险地图"
+      },
+      {
+        "command": "pyland.openArena",
+        "title": "PyLand: 打开实操训练场"
       }
     ],
     "menus": {
