@@ -28,6 +28,8 @@ export class PracticeViewManager {
   private questions: Question[] = [];
   private results = new Map<number, boolean>();
   private codeFiles = new Map<number, string>();
+  /** 本 session 已经为哪些 qIdx 写过文件——避免重复打开同一题时把用户的代码覆盖 */
+  private openedInSession = new Set<number>();
   private recentHashes: string[] = [];
   private sessionLabel = "";
   private playgroundChannel: vscode.OutputChannel = vscode.window.createOutputChannel("PyLand Playground");
@@ -115,6 +117,7 @@ export class PracticeViewManager {
   private startSession(): void {
     this.results = new Map();
     this.codeFiles = new Map();
+    this.openedInSession.clear();
     // 记录指纹（去重窗口，保留最近 60）
     for (const q of this.questions) {
       const h = JSON.stringify([q.type, q.q, q.code, q.expected]);
@@ -161,9 +164,14 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 `;
     const content = header + (q.starter || "");
 
-    if (!fs.existsSync(filePath)) {
+    // 同一 session 内首次打开该 qIdx：无条件覆盖（防止新题写到旧文件里）；
+    // 同一 session 内重复打开：保留用户已写代码。
+    // 文件被用户手动删了也补回去。
+    const needWrite = !this.openedInSession.has(qIdx) || !fs.existsSync(filePath);
+    if (needWrite) {
       fs.writeFileSync(filePath, content, "utf8");
     }
+    this.openedInSession.add(qIdx);
 
     this.codeFiles.set(qIdx, filePath);
 
