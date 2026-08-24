@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "D:\\Python314\\python.exe",
+  "pyland.pythonPath": "D:\\Python314\\python.exe",
+  "pyland.exerciseDir": "pyland-exercises",
+  "editor.fontSize": 15,
+  "files.autoSave": "afterDelay",
+  "python.analysis.typeCheckingMode": "off"
+}

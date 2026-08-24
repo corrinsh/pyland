@@ -1,0 +1,114 @@
+{
+  "name": "pyland",
+  "displayName": "PyLand - Python 冒险学院",
+  "description": "零基础 Python 游戏化学习：章节地图 + 真编辑器写代码 + 一键检查判完成",
+  "version": "1.0.0",
+  "publisher": "corrin",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "icon": "media/icon.png",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:pyland.chapterTree",
+    "onCommand:pyland.openMap"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pyland-sidebar",
+          "title": "PyLand 冒险",
+          "icon": "media/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "pyland-sidebar": [
+        {
+          "id": "pyland.chapterTree",
+          "name": "章节地图"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pyland.openLesson",
+        "title": "PyLand: 打开关卡",
+        "icon": "$(play)"
+      },
+      {
+        "command": "pyland.checkCode",
+        "title": "PyLand: 检查代码",
+        "icon": "$(check)"
+      },
+      {
+        "command": "pyland.refreshTree",
+        "title": "PyLand: 刷新地图",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "pyland.resetProgress",
+        "title": "PyLand: 重置存档"
+      },
+      {
+        "command": "pyland.exportProgress",
+        "title": "PyLand: 导出进度"
+      },
+      {
+        "command": "pyland.importProgress",
+        "title": "PyLand: 导入进度"
+      },
+      {
+        "command": "pyland.openMap",
+        "title": "PyLand: 打开冒险地图"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pyland.refreshTree",
+          "when": "view == pyland.chapterTree",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pyland.openLesson",
+          "when": "view == pyland.chapterTree && viewItem == lesson",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PyLand",
+      "properties": {
+        "pyland.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python 解释器路径（默认从 PATH 找 python，也可填绝对路径如 D:\\\\Python314\\\\python.exe）"
+        },
+        "pyland.exerciseDir": {
+          "type": "string",
+          "default": "pyland-exercises",
+          "description": "练习文件存放的文件夹名（在工作区根目录下）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.3.0"
+  }
+}
