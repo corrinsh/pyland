@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#4a3f8c">
 <title>PyLand · 零基础 Python 冒险</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <style>
 :root{
   --ink:#2b2d42; --bg:#f7ecd4; --paper:#fffaf0;
@@ -53,6 +57,12 @@ body{
 .cover .sub{font-size:15px;color:#5c5f7d;margin-bottom:26px}
 .cover .hero-emoji{font-size:64px;margin:10px 0 18px}
 .cover .tagline{font-size:13.5px;background:var(--paper);border:2.5px solid var(--ink);border-radius:8px;display:inline-block;padding:6px 14px;margin-bottom:26px}
+.cover-engine{margin:14px auto 22px;padding:7px 14px;border-radius:20px;font-size:13px;display:inline-block;border:1.5px solid var(--ink);background:var(--paper);color:var(--ink);max-width:90%}
+.cover-engine.ok{background:#d4f5d4;border-color:#3a7a3a;color:#2a5a2a}
+.cover-engine.loading{background:#fff3c4;border-color:#b8862b;color:#7a5a00}
+.cover-engine.loading::before{content:"";display:inline-block;width:10px;height:10px;border:2px solid #7a5a00;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px;vertical-align:-1px}
+.cover-engine.idle{opacity:.7}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* 地图 */
 .chapter-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
@@ -620,12 +630,20 @@ function go(screen, arg){
 function renderCover(){
   const cur = curLevel();
   const hasProgress = Object.keys(S.progress).length > 0;
+  // 引擎状态小条：让用户随时知道 Skulpt 在不在——之前藏得太深
+  const engineSt = skulptStatus();
+  const engineBadge = engineSt==="ready"
+    ? `<div class="cover-engine ok">⚡ 代码引擎已就绪</div>`
+    : engineSt==="loading"
+      ? `<div class="cover-engine loading">⚡ 代码引擎加载中… <span onclick="loadSkulpt()" style="cursor:pointer;opacity:.7;text-decoration:underline">重试</span></div>`
+      : `<div class="cover-engine idle">⚡ 代码引擎未启动（点「实操训练场」会现场加载）</div>`;
   app.innerHTML = `
   <div class="cover">
     <div class="hero-emoji">🐉</div>
     <div class="logo">PYLAND</div>
     <div class="sub">零基础 Python 冒险 · 自用修炼场</div>
     <div class="tagline">一边闯关 · 一边学会写代码</div>
+    ${engineBadge}
     <div class="btn-row">
       <button class="btn go" onclick="go('arena')">🏋️ 实操训练场</button>
     </div>
@@ -636,7 +654,22 @@ function renderCover(){
         : `<button class="btn primary" onclick="go('map')">开始冒险</button>`}
     </div>
   </div>`;
-  loadSkulpt();   // 引擎后台预热——封面加载完时引擎已就绪，进入实操题零等待
+  // 封面点亮的瞬间就启动预热；同时挂上轮询，进度变化时刷新这个 badge
+  loadSkulpt().catch(()=>{});
+  if(window.__enginePoll) clearInterval(window.__enginePoll);
+  window.__enginePoll = setInterval(()=>{
+    const st = skulptStatus();
+    const el = document.querySelector(".cover-engine");
+    if(!el) return;     // 已经离开封面
+    if(st==="ready" && !el.classList.contains("ok")){
+      el.className = "cover-engine ok";
+      el.innerHTML = "⚡ 代码引擎已就绪";
+      clearInterval(window.__enginePoll);
+    } else if(st==="loading" && !el.classList.contains("loading")){
+      el.className = "cover-engine loading";
+      el.innerHTML = "⚡ 代码引擎加载中… <span onclick='loadSkulpt()' style='cursor:pointer;opacity:.7;text-decoration:underline'>重试</span>";
+    }
+  }, 400);
 }
 
 function renderMap(){
@@ -726,20 +759,51 @@ function renderTeach(l){
 
 const TYPE_LABEL = { choice:"单选", judge:"判断", predict:"预测输出", blank:"填空", order:"排序", code:"实操编程 ⚡" };
 
-/* ---------- Skulpt 真代码引擎（教学专用，约 600KB，加载 1-3 秒） ---------- */
-const SKULPT_URL = "https://cdn.jsdelivr.net/npm/skulpt@0.11.0/dist/skulpt.min.js";
+/* ---------- Skulpt 真代码引擎（教学专用，约 470KB） ----------
+   加载策略：多 CDN fallback 链。一个炸了立刻试下一个。
+   顺序：unpkg(锁 0.11.0) → jsdelivr(latest) → jsdelivr gh 镜像 → unpkg(latest)
+   全部失败再 reject，让上层把提示暴露给用户。 */
+const SKULPT_CANDIDATES = [
+  "https://unpkg.com/skulpt@0.11.0/dist/skulpt.min.js",
+  "https://cdn.jsdelivr.net/npm/skulpt@latest/dist/skulpt.min.js",
+  "https://cdn.jsdelivr.net/gh/skulpt/skulpt@master/dist/skulpt.min.js",
+  "https://unpkg.com/skulpt/dist/skulpt.min.js"
+];
 let skulptReady = null;
+let skulptTried = [];   // 记录加载过程，方便排查"是哪个 CDN 炸了"
 function loadSkulpt(){
   if(skulptReady) return skulptReady;
+  if(typeof Sk !== "undefined"){ skulptReady = Promise.resolve(); return skulptReady; }
   skulptReady = new Promise((resolve, reject)=>{
-    if(typeof Sk !== "undefined"){ resolve(); return; }
-    const s = document.createElement("script");
-    s.src = SKULPT_URL;
-    s.onload = ()=>resolve();
-    s.onerror = ()=>{ skulptReady = null; reject(new Error("Skulpt 加载失败")); };
-    document.head.appendChild(s);
-  });
+    let idx = 0;
+    const tryOne = ()=>{
+      if(idx >= SKULPT_CANDIDATES.length){
+        return reject(new Error("所有 Skulpt CDN 都拉不动：\n" + skulptTried.map(u=>"✗ "+u).join("\n")));
+      }
+      const url = SKULPT_CANDIDATES[idx++];
+      skulptTried.push(url);
+      const s = document.createElement("script");
+      s.src = url;
+      s.async = true;
+      const finish = (ok)=>{
+        if(ok){ resolve(); return; }
+        tryOne();   // 这个 CDN 失败，下一个
+      };
+      s.onload = ()=>{ if(typeof Sk !== "undefined") finish(true); else finish(false); };
+      s.onerror = ()=>finish(false);
+      // 30 秒超时，避免某个 CDN 卡住把整个流程吊死
+      setTimeout(()=>{ if(typeof Sk === "undefined") finish(false); }, 30000);
+      document.head.appendChild(s);
+    };
+    tryOne();
+  }).catch(e=>{ skulptReady = null; throw e; });
   return skulptReady;
+}
+// 给上层一个"现在就绪吗"的快速查询（不进 await）
+function skulptStatus(){
+  if(typeof Sk !== "undefined") return "ready";
+  if(skulptTried.length===0) return "idle";
+  return "loading";
 }
 async function runPythonCode(code){
   await loadSkulpt();
@@ -810,7 +874,13 @@ async function runCodeQ(){
   let res;
   try{ res = await runPythonCode(code); }
   catch(e){
-    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">需要联网加载代码引擎（约 600KB，1-3 秒）。请检查网络后点「再试一次」。</div></div>`;
+    const tried = skulptTried.map(u=>u.replace(/^https?:\/\//,"").split("/")[0]).join(" / ");
+    outBox.innerHTML = `<div class="feedback bad">
+      <div class="fb-title">😵 引擎没连上</div>
+      <div class="fb-exp">已经把 jsdelivr / unpkg / gh 镜像都试了一遍，全部拉不动（你的网络似乎把所有国外 CDN 都挡了）。
+        <div style="margin-top:8px;font-size:12px;color:#888">试过的源：${esc(tried)}</div></div>
+      <div class="btn-row" style="margin-top:10px"><button class="btn small go" onclick="skulptReady=null;skulptTried=[];this.textContent='⏳ 重试中…';loadSkulpt().then(()=>location.reload()).catch(()=>this.textContent='还是不行')">🔁 再试一次</button></div>
+    </div>`;
     btn.disabled = false; btn.textContent = "▶ 运行咒语"; return;
   }
   btn.disabled = false; btn.textContent = "▶ 运行咒语";
@@ -1491,7 +1561,13 @@ async function runPlayground(){
   let res;
   try{ res = await runPythonCode(code); }
   catch(e){
-    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">需要联网加载代码引擎（约 600KB，1-3 秒）。请检查网络再试。</div></div>`;
+    const tried = skulptTried.map(u=>u.replace(/^https?:\/\//,"").split("/")[0]).join(" / ");
+    outBox.innerHTML = `<div class="feedback bad">
+      <div class="fb-title">😵 引擎没连上</div>
+      <div class="fb-exp">已经把 jsdelivr / unpkg / gh 镜像都试了一遍，全部拉不动（你的网络似乎把所有国外 CDN 都挡了）。
+        <div style="margin-top:8px;font-size:12px;color:#888">试过的源：${esc(tried)}</div></div>
+      <div class="btn-row" style="margin-top:10px"><button class="btn small go" onclick="skulptReady=null;skulptTried=[];this.textContent='⏳ 重试中…';loadSkulpt().then(()=>location.reload()).catch(()=>this.textContent='还是不行')">🔁 再试一次</button></div>
+    </div>`;
     btn.disabled=false; btn.textContent="▶ 运行"; return;
   }
   btn.disabled = false; btn.textContent = "▶ 运行";
@@ -1645,6 +1721,12 @@ function toast(msg){
 
 loadState();
 go("cover");
+
+// 注册 Service Worker——首次在线时把 Skulpt 缓存进本地，
+// 以后断网也能玩，再也不会被 CDN 403 坑到
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
 </script>
 </body>
 </html>

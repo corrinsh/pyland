@@ -1,0 +1,14 @@
+{
+  "name": "PyLand · 零基础 Python 冒险",
+  "short_name": "PyLand",
+  "description": "零基础 Python 闯关 + 实操训练场（自用修炼场）",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbf6e8",
+  "theme_color": "#4a3f8c",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
