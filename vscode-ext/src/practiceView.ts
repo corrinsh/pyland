@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
+import { spawn } from "child_process";
 import { COURSES, findLevel } from "./courses";
 import type { Question } from "./types";
 import { genBatch, pickFromLevel } from "./generator";
@@ -12,6 +13,7 @@ type ArenaMsg =
   | { cmd: "startLevelPractice"; levelId: string }
   | { cmd: "startGen"; mode: "theory" | "code" | "all"; chapterIds: string[] }
   | { cmd: "openPlayground" }
+  | { cmd: "runPlayground" }
   | { cmd: "answer"; qIdx: number; correct: boolean; picked: string }
   | { cmd: "openCode"; qIdx: number }
   | { cmd: "checkCode"; qIdx: number }
@@ -28,6 +30,7 @@ export class PracticeViewManager {
   private codeFiles = new Map<number, string>();
   private recentHashes: string[] = [];
   private sessionLabel = "";
+  private playgroundChannel: vscode.OutputChannel = vscode.window.createOutputChannel("PyLand Playground");
 
   constructor(private ctx: vscode.ExtensionContext) {}
 
@@ -87,6 +90,9 @@ export class PracticeViewManager {
       }
       case "openPlayground":
         await this.openPlayground();
+        break;
+      case "runPlayground":
+        await this.runPlayground();
         break;
       case "answer":
         this.results.set(msg.qIdx, msg.correct);
@@ -213,7 +219,66 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     }
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
-    vscode.window.showInformationMessage("⌨️ 自由编码台已打开——写完点右上角 ▶ 运行，或右键「在终端中运行 Python 文件」。");
+    const choice = await vscode.window.showInformationMessage(
+      "⌨️ 自由编码台已打开——写完代码点下面的「▶ 立即运行」按钮。",
+      "▶ 立即运行",
+      "打开输出面板"
+    );
+    if (choice === "▶ 立即运行") {
+      await this.runPlayground();
+    } else if (choice === "打开输出面板") {
+      this.playgroundChannel.show(true);
+    }
+  }
+
+  /**
+   * 运行 playground.py——直接 child_process.spawn，绕开 PowerShell 5.1 的解析坑。
+   * 输出写到独立 "PyLand Playground" OutputChannel。
+   */
+  public async runPlayground(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage("请先打开一个文件夹（工作区）。");
+      return;
+    }
+    const filePath = path.join(wsFolder.uri.fsPath, "playground.py");
+    if (!fs.existsSync(filePath)) {
+      vscode.window.showWarningMessage("playground.py 不存在，请先打开自由编码台。");
+      return;
+    }
+    // 优先用 settings.json 配的 pyland.pythonPath，回退到 PATH 里的 python
+    const cfg = vscode.workspace.getConfiguration("pyland");
+    const python = (cfg.get<string>("pythonPath") || "python").trim();
+    const cwd = wsFolder.uri.fsPath;
+
+    this.playgroundChannel.clear();
+    this.playgroundChannel.appendLine(`▶ ${python} ${filePath}`);
+    this.playgroundChannel.show(true);
+
+    return new Promise<void>((resolve) => {
+      const child = spawn(python, [filePath], {
+        cwd,
+        env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+      });
+      const timer = setTimeout(() => {
+        child.kill();
+        this.playgroundChannel.appendLine("\n⏱️ 运行超时（15s）已强制结束。");
+        resolve();
+      }, 15000);
+      child.stdout.on("data", (d: Buffer) => this.playgroundChannel.append(d.toString("utf8")));
+      child.stderr.on("data", (d: Buffer) => this.playgroundChannel.append("[stderr] " + d.toString("utf8")));
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        this.playgroundChannel.appendLine(`\n❌ 启动失败：${e.message}`);
+        vscode.window.showErrorMessage(`找不到 Python（${python}）。请确认 pythonPath 配置正确。`);
+        resolve();
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        this.playgroundChannel.appendLine(`\n— 进程退出，code=${code} —`);
+        resolve();
+      });
+    });
   }
 
   /* ═══════════ 渲染 ═══════════ */
@@ -344,14 +409,19 @@ ${quizCSS()}
 
 <div class="mode-card">
   <h2>⌨️ 自由编码台</h2>
-  <div class="desc">无题目无分数，打开 playground.py 随便写随便跑。</div>
-  <button class="gen-btn" onclick="openPlayground()">打开自由编码台</button>
+  <div class="desc">无题目无分数，打开 playground.py 随便写随便跑。运行结果走 PyLand Playground 输出面板（不经过 PowerShell）。</div>
+  <div class="gen-row">
+    <button class="gen-btn" onclick="openPlayground()">打开 playground.py</button>
+    <button class="gen-btn warm" onclick="runPlayground()">▶ 立即运行</button>
+  </div>
+  <div class="hint-line">建议：改完代码按 Ctrl+S 保存，再点「▶ 立即运行」看结果。</div>
 </div>
 
 <script>
 const vscode = acquireVsCodeApi();
 function startLevelPractice(levelId) { vscode.postMessage({ cmd: 'startLevelPractice', levelId }); }
 function openPlayground() { vscode.postMessage({ cmd: 'openPlayground' }); }
+function runPlayground() { vscode.postMessage({ cmd: 'runPlayground' }); }
 
 /* 无限出题器：chip 状态管理 + 实时预览 */
 const __genState = { mode: 'all', chapters: [] };
