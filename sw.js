@@ -1,16 +1,27 @@
-// PyLand Service Worker —— 把 Skulpt 引擎缓存下来用
-// 原理：首次打开在线时，sw 把 Skulpt CDN 的所有候选 URL 都缓存进本地。
-// 之后打开页面（哪怕断网）就直接从本地命中，再也不被 CDN 403 坑到。
-const VERSION = "v1";
+// PyLand Service Worker —— 缓存整个站点（含 Skulpt）
+// 原理：首次打开在线时，把 index.html / sw.js / manifest.json / icon 全部缓存进本地。
+// 之后打开（哪怕断网）直接从本地命中，秒开，零等待。
+// 注意：Skulpt 引擎已经内嵌在 HTML 里，无需单独缓存。
+const VERSION = "v2";
 const CACHE_NAME = `pyland-${VERSION}`;
-const SKULPT_PREFIXES = [
-  "https://unpkg.com/skulpt",
-  "https://cdn.jsdelivr.net/npm/skulpt",
-  "https://cdn.jsdelivr.net/gh/skulpt"
+const ASSETS = [
+  "./",                // 入口页
+  "./index.html",
+  "./sw.js",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", e => {
-  self.skipWaiting();
+  // 容错：单个资源失败不阻塞 SW 安装
+  e.waitUntil(
+    caches.open(CACHE_NAME).then(cache =>
+      Promise.all(ASSETS.map(u =>
+        fetch(u).then(r => r.ok ? cache.put(u, r.clone()) : null).catch(() => null)
+      ))
+    ).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
@@ -21,25 +32,22 @@ self.addEventListener("activate", e => {
   );
 });
 
+// 缓存策略：cache-first（同源资源），网络失败时用缓存兜底
 self.addEventListener("fetch", e => {
-  const url = e.request.url;
-  // 只接管 Skulpt 相关 CDN；其它一律放行（不同 HTML 之间走网络优先）
-  if(SKULPT_PREFIXES.some(p => url.startsWith(p))){
-    e.respondWith(
-      caches.open(CACHE_NAME).then(cache =>
-        cache.match(e.request).then(cached => {
-          if(cached){
-            return cached;
+  const url = new URL(e.request.url);
+  // 只接管同源请求；外链（CDN/CORS）不动
+  if(url.origin !== self.location.origin) return;
+  e.respondWith(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.match(e.request).then(cached => {
+        if(cached) return cached;
+        return fetch(e.request).then(resp => {
+          if(resp.ok && (e.request.method === "GET")){
+            cache.put(e.request, resp.clone());
           }
-          return fetch(e.request).then(resp => {
-            // 只缓存成功的响应
-            if(resp.ok){
-              cache.put(e.request, resp.clone());
-            }
-            return resp;
-          }).catch(() => cached);   // 离线且无缓存 → 返回 undefined 让上层报错
-        })
-      )
-    );
-  }
+          return resp;
+        }).catch(() => cached);   // 离线 + 缓存未命中 → 让浏览器显示默认错误
+      })
+    )
+  );
 });
