@@ -496,18 +496,21 @@ function genHash(q: Question): string {
 /**
  * 生成一批练习题
  * @param mode "theory" 理论 | "code" 实操 | "all" 混合
- * @param chapterId 限定章节（可选）
  * @param count 题数
+ * @param chapterFilter 限定章节：单个 id / id 数组 / 不传 = 全部
  * @param recentHashes 最近出过的题指纹（避免重复）
  */
 export function genBatch(
   mode: "theory" | "code" | "all",
   count: number,
-  chapterId?: string,
+  chapterFilter?: string | string[],
   recentHashes: string[] = [],
 ): Question[] {
+  const chs: string[] | null = !chapterFilter
+    ? null
+    : Array.isArray(chapterFilter) ? chapterFilter : [chapterFilter];
   const pool = TEMPLATES.filter(t =>
-    (!chapterId || t.chapter === chapterId) &&
+    (!chs || chs.includes(t.chapter)) &&
     (mode === "all" || t.kind === mode),
   );
   if (pool.length === 0) return [];

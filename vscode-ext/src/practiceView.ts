@@ -10,7 +10,7 @@ import { runAndCheck } from "./checker";
 /** Webview 消息协议（训练场） */
 type ArenaMsg =
   | { cmd: "startLevelPractice"; levelId: string }
-  | { cmd: "startGen"; mode: "theory" | "code" | "all"; chapterId?: string }
+  | { cmd: "startGen"; mode: "theory" | "code" | "all"; chapterIds: string[] }
   | { cmd: "openPlayground" }
   | { cmd: "answer"; qIdx: number; correct: boolean; picked: string }
   | { cmd: "openCode"; qIdx: number }
@@ -72,13 +72,15 @@ export class PracticeViewManager {
         break;
       }
       case "startGen": {
-        this.questions = genBatch(msg.mode, PRACTICE_COUNT, msg.chapterId, this.recentHashes);
+        this.questions = genBatch(msg.mode, PRACTICE_COUNT, msg.chapterIds, this.recentHashes);
         if (this.questions.length === 0) {
-          vscode.window.showWarningMessage("出题器没出够题，换个模式试试。");
+          vscode.window.showWarningMessage("出题器没出够题，换个组合试试。");
           return;
         }
         const modeName = msg.mode === "theory" ? "理论卷" : msg.mode === "code" ? "实操卷" : "混合卷";
-        const chName = msg.chapterId ? COURSES.find(c => c.id === msg.chapterId)?.title + " · " : "";
+        const chName = msg.chapterIds.length > 0
+          ? msg.chapterIds.map(id => COURSES.find(c => c.id === id)?.title || id).join("+") + " · "
+          : "";
         this.sessionLabel = `无限出题 · ${chName}${modeName}`;
         this.startSession();
         break;
@@ -252,6 +254,38 @@ ${quizCSS()}
 .gen-btn:hover { opacity: 0.85; }
 .gen-btn.warm { background: var(--accent); }
 .gen-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+.gen-row .label { font-size: 13px; color: var(--vscode-descriptionForeground); align-self: center; margin-right: 4px; }
+.chip {
+  display: inline-block; padding: 7px 14px; border-radius: 18px;
+  border: 1px solid var(--border); background: transparent; color: var(--fg);
+  cursor: pointer; font-size: 13px; font-family: inherit; user-select: none;
+  transition: all 0.12s;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  box-shadow: 0 2px 6px rgba(232,112,58,0.25);
+}
+.chip.on.chip-accent2 {
+  background: var(--accent2); border-color: var(--accent2); color: #fff;
+  box-shadow: 0 2px 6px rgba(91,99,255,0.25);
+}
+.preview-line {
+  margin-top: 14px; padding: 10px 14px; border-radius: 8px;
+  background: var(--card-bg); border: 1px dashed var(--border);
+  font-size: 13px; color: var(--fg);
+}
+.preview-line .label { color: var(--vscode-descriptionForeground); margin-right: 6px; }
+.preview-line .val { color: var(--accent); font-weight: 600; }
+.start-btn {
+  display: block; width: 100%; margin-top: 14px; padding: 14px 0;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+  color: #fff; border: none; border-radius: 8px; cursor: pointer;
+  font-size: 15px; font-weight: 600; font-family: inherit;
+  transition: transform 0.1s, box-shadow 0.15s;
+}
+.start-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(232,112,58,0.35); }
+.start-btn:active { transform: translateY(0); }
 .ch-block { margin-bottom: 6px; }
 .ch-title { font-weight: bold; font-size: 14px; margin: 10px 0 8px; }
 .ch-sub { font-weight: normal; color: var(--vscode-descriptionForeground); font-size: 12px; }
@@ -275,17 +309,30 @@ ${quizCSS()}
 
 <div class="mode-card">
   <h2>🤖 无限出题器</h2>
-  <div class="desc">参数化出题，每次都是新题，重复率极低。一批 ${PRACTICE_COUNT} 题。</div>
-  <div class="gen-row">
-    <button class="gen-btn warm" onclick="startGen('all')">🎲 混合卷</button>
-    <button class="gen-btn" onclick="startGen('theory')">📖 理论卷</button>
-    <button class="gen-btn" onclick="startGen('code')">⌨️ 实操卷</button>
+  <div class="desc">参数化出题，每次都是新题，重复率极低。一批 ${PRACTICE_COUNT} 题。自由组合题型+章节。</div>
+
+  <div class="gen-row" style="margin-top:6px">
+    <span class="label">题型</span>
+    <span class="chip on chip-accent2" data-mode="all" onclick="pickMode(this)">🎲 混合</span>
+    <span class="chip chip-accent2" data-mode="theory" onclick="pickMode(this)">📖 理论</span>
+    <span class="chip chip-accent2" data-mode="code" onclick="pickMode(this)">⌨️ 实操</span>
   </div>
-  <div class="gen-row" style="margin-top:8px">
-    <button class="gen-btn ghost" onclick="startGen('all','ch1')">一章混合</button>
-    <button class="gen-btn ghost" onclick="startGen('all','ch2')">二章混合</button>
-    <button class="gen-btn ghost" onclick="startGen('all','ch3')">三章混合</button>
+
+  <div class="gen-row" style="margin-top:10px">
+    <span class="label">章节</span>
+    <span class="chip on" data-ch="__all__" onclick="toggleChapter(this)">全章节</span>
+    ${COURSES.filter(c => !c.locked && c.levels.length > 0).map(ch =>
+      `<span class="chip" data-ch="${ch.id}" data-title="${escape(ch.title)}" onclick="toggleChapter(this)">${ch.no} · ${escape(ch.title)}</span>`
+    ).join("")}
   </div>
+
+  <div class="preview-line" id="genPreview">
+    <span class="label">将出题：</span>
+    <span class="val" id="genPreviewVal"></span>
+  </div>
+
+  <button class="start-btn" onclick="startGen()">▶ 开始 ${PRACTICE_COUNT} 题</button>
+
   <div class="hint-line">出过的题会记住指纹——连刷多批基本不撞题。</div>
 </div>
 
@@ -304,8 +351,54 @@ ${quizCSS()}
 <script>
 const vscode = acquireVsCodeApi();
 function startLevelPractice(levelId) { vscode.postMessage({ cmd: 'startLevelPractice', levelId }); }
-function startGen(mode, chapterId) { vscode.postMessage({ cmd: 'startGen', mode, chapterId }); }
 function openPlayground() { vscode.postMessage({ cmd: 'openPlayground' }); }
+
+/* 无限出题器：chip 状态管理 + 实时预览 */
+const __genState = { mode: 'all', chapters: [] };
+function pickMode(el) {
+  document.querySelectorAll('.chip[data-mode]').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+  __genState.mode = el.dataset.mode;
+  refreshPreview();
+}
+function toggleChapter(el) {
+  const id = el.dataset.ch;
+  if (id === '__all__') {
+    document.querySelectorAll('.chip[data-ch]').forEach(c => c.classList.remove('on'));
+    el.classList.add('on');
+    __genState.chapters = [];
+  } else {
+    const allChip = document.querySelector('.chip[data-ch="__all__"]');
+    if (allChip) allChip.classList.remove('on');
+    el.classList.toggle('on');
+    const on = Array.from(document.querySelectorAll('.chip[data-ch]:not([data-ch="__all__"]).on')).map(c => c.dataset.ch);
+    if (on.length === 0) {
+      if (allChip) allChip.classList.add('on');
+      __genState.chapters = [];
+    } else {
+      __genState.chapters = on;
+    }
+  }
+  refreshPreview();
+}
+function refreshPreview() {
+  const modeMap = { all: '混合卷', theory: '理论卷', code: '实操卷' };
+  const modeTxt = modeMap[__genState.mode] || '混合卷';
+  const chTxt = __genState.chapters.length === 0
+    ? '全章节'
+    : __genState.chapters.map(id => {
+        const c = document.querySelector('.chip[data-ch="' + id + '"]');
+        return c ? (c.dataset.title || id) : id;
+      }).join('+');
+  const el = document.getElementById('genPreviewVal');
+  if (el) el.textContent = modeTxt + ' · ' + chTxt;
+}
+function startGen() {
+  vscode.postMessage({ cmd: 'startGen', mode: __genState.mode, chapterIds: __genState.chapters });
+}
+
+/* 页面加载完刷一次预览 */
+window.addEventListener('load', refreshPreview);
 </script>
 </body>
 </html>`;
