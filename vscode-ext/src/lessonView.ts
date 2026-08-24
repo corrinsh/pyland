@@ -6,12 +6,25 @@ import type { Question, LevelProgress } from "./types";
 import { ProgressManager } from "./progress";
 import { runAndCheck, parsePyError } from "./checker";
 
+/** Fisher-Yates 洗牌 */
+function shuffleArray<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /** 活跃关卡状态 */
 interface ActiveLesson {
   levelId: string;
   panel: vscode.WebviewPanel;
   results: Map<number, boolean>;  // qIdx → correct
   codeFileUris: Map<number, string>; // qIdx → file path
+  /** 本次会话实际展示的题组（已通关重刷时为打乱顺序的副本） */
+  questions: Question[];
+  /** 本次会话已经为哪些 qIdx 写过文件——打乱后同 qIdx 可能是不同题，首开必须覆盖 */
+  openedInLesson: Set<number>;
 }
 
 /** Webview 消息协议 */
@@ -46,6 +59,10 @@ export class LessonViewManager {
 
     const { level } = found;
 
+    // 已通关的关卡重刷 → 打乱题序（首刷按原序保留教学递进）
+    const isRerun = this.pm.isLevelDone(levelId);
+    const questions: Question[] = isRerun ? shuffleArray([...level.questions]) : [...level.questions];
+
     // 如果已有面板，先关
     this.active?.panel.dispose();
 
@@ -59,13 +76,15 @@ export class LessonViewManager {
       },
     );
 
-    panel.webview.html = this.generateHTML(level);
+    panel.webview.html = this.generateHTML(level, questions);
 
     this.active = {
       levelId,
       panel,
       results: new Map(),
       codeFileUris: new Map(),
+      questions,
+      openedInLesson: new Set(),
     };
 
     panel.webview.onDidReceiveMessage(
@@ -119,7 +138,7 @@ export class LessonViewManager {
     if (!this.active) return;
     const found = findLevel(this.active.levelId);
     if (!found) return;
-    const q = found.level.questions[qIdx];
+    const q = this.active.questions[qIdx];
     if (!q || q.type !== "code") return;
 
     const config = vscode.workspace.getConfiguration("pyland");
@@ -153,10 +172,11 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 
     const content = header + (q.starter || "");
 
-    // 如果文件已存在，不覆盖（保留用户写的代码）
-    if (!fs.existsSync(filePath)) {
+    // 本次会话首次打开该题 → 覆盖写（题目可能因打乱而变化）；重复打开 → 保留用户代码
+    if (!fs.existsSync(filePath) || !this.active.openedInLesson.has(qIdx)) {
       fs.writeFileSync(filePath, content, "utf8");
     }
+    this.active.openedInLesson.add(qIdx);
 
     this.active.codeFileUris.set(qIdx, filePath);
 
@@ -176,7 +196,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     if (!this.active) return;
     const found = findLevel(this.active.levelId);
     if (!found) return;
-    const q = found.level.questions[qIdx];
+    const q = this.active.questions[qIdx];
     if (!q || q.type !== "code" || !q.expected) return;
 
     const filePath = this.active.codeFileUris.get(qIdx);
@@ -219,7 +239,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     if (!this.active) return;
     const found = findLevel(this.active.levelId);
     if (!found) return;
-    const q = found.level.questions[qIdx];
+    const q = this.active.questions[qIdx];
 
     vscode.window.showInformationMessage(
       `💡 提示（会扣分）：${q.explain}`,
@@ -233,7 +253,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     const found = findLevel(this.active.levelId);
     if (!found) return;
 
-    const total = found.level.questions.length;
+    const total = this.active.questions.length;
     const answered = this.active.results.size;
     const firstTry = Array.from(this.active.results.values()).filter(Boolean).length;
 
@@ -289,7 +309,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     // 找当前代码题（最近的未通过 code 题）
     const found = findLevel(this.active.levelId);
     if (!found) return;
-    const codeQs = found.level.questions
+    const codeQs = this.active.questions
       .map((q, i) => ({ q, i }))
       .filter(x => x.q.type === "code");
     if (codeQs.length === 0) return;
@@ -316,15 +336,15 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     vscode.window.showInformationMessage("所有实操题都通过了！");
   }
 
-  /** 生成 HTML */
-  private generateHTML(level: import("./types").Level): string {
+  /** 生成 HTML（questions 为本次会话实际展示的题组——重刷时可能是打乱顺序的副本） */
+  private generateHTML(level: import("./types").Level, questions: Question[]): string {
     const pm = this.pm;
     const xp = pm.getXP();
     const lv = pm.getLevel();
     const streak = pm.getStreak();
     const done = pm.isLevelDone(level.id);
 
-    const questionsHTML = level.questions.map((q, i) => this.questionHTML(q, i)).join("\n");
+    const questionsHTML = questions.map((q, i) => this.questionHTML(q, i)).join("\n");
 
     return /*html*/ `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -483,9 +503,9 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 </div>
 
 <div class="footer">
-  <button class="finish-btn" id="finishBtn" onclick="finishLevel()">提交关卡 · ${level.questions.length} 题</button>
+  <button class="finish-btn" id="finishBtn" onclick="finishLevel()">提交关卡 · ${questions.length} 题</button>
   <div style="margin-top:8px;font-size:13px;color:var(--vscode-descriptionForeground)">
-    答对 <span id="answeredCount">0</span> / ${level.questions.length}
+    答对 <span id="answeredCount">0</span> / ${questions.length}
   </div>
 </div>
 
@@ -499,7 +519,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 
 <script>
 const vscode = acquireVsCodeApi();
-const total = ${level.questions.length};
+const total = ${questions.length};
 let answered = 0;
 
 function updateProgress() {

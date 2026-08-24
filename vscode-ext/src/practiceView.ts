@@ -7,6 +7,7 @@ import type { Question } from "./types";
 import { genBatch, pickFromLevel } from "./generator";
 import { quizCSS, quizScript, questionHTML, escape, escapeCode } from "./quizRender";
 import { runAndCheck } from "./checker";
+import { askTeacher } from "./teacher";
 
 /** Webview 消息协议（训练场） */
 type ArenaMsg =
@@ -14,6 +15,7 @@ type ArenaMsg =
   | { cmd: "startGen"; mode: "theory" | "code" | "all"; chapterIds: string[] }
   | { cmd: "openPlayground" }
   | { cmd: "runPlayground" }
+  | { cmd: "askTeacher"; text: string }
   | { cmd: "answer"; qIdx: number; correct: boolean; picked: string }
   | { cmd: "openCode"; qIdx: number }
   | { cmd: "checkCode"; qIdx: number }
@@ -32,6 +34,8 @@ export class PracticeViewManager {
   private openedInSession = new Set<number>();
   private recentHashes: string[] = [];
   private sessionLabel = "";
+  /** 当前 session 是哪个关卡的练习（用于指纹持久化；无限出题 session 为 null） */
+  private currentLevelId: string | null = null;
   private playgroundChannel: vscode.OutputChannel = vscode.window.createOutputChannel("PyLand Playground");
 
   constructor(private ctx: vscode.ExtensionContext) {}
@@ -71,8 +75,25 @@ export class PracticeViewManager {
       case "startLevelPractice": {
         const found = findLevel(msg.levelId);
         if (!found) return;
-        this.questions = pickFromLevel(found.level.questions, PRACTICE_COUNT);
-        this.sessionLabel = `关卡练习 · ${found.level.icon} ${found.level.title}`;
+        // 该关最近做过的题指纹（持久化在 globalState，重启也不忘）
+        const seen = this.getLevelSeen(msg.levelId);
+        const { questions: qs, freshCount } = pickFromLevel(found.level.questions, PRACTICE_COUNT, seen);
+        // 原题不够 10 道（新题用完了）→ 用该章节的变式题补足，保证重刷有新鲜感
+        let variantCount = 0;
+        if (qs.length < PRACTICE_COUNT) {
+          const extra = genBatch("all", PRACTICE_COUNT - qs.length, found.chapterId, [...seen, ...this.recentHashes]);
+          variantCount = extra.length;
+          this.questions = [...qs, ...extra];
+        } else {
+          this.questions = qs;
+        }
+        // 标注：几道复习题 / 几道变式题
+        const reviewCount = qs.length - freshCount;
+        const tags: string[] = [];
+        if (reviewCount > 0) tags.push(`复习 ${reviewCount}`);
+        if (variantCount > 0) tags.push(`变式 ${variantCount}`);
+        this.sessionLabel = `关卡练习 · ${found.level.icon} ${found.level.title}` + (tags.length ? ` · ${tags.join(" · ")}` : "");
+        this.currentLevelId = msg.levelId;
         this.startSession();
         break;
       }
@@ -92,6 +113,7 @@ export class PracticeViewManager {
           ? msg.chapterIds.map(id => COURSES.find(c => c.id === id)?.title || id).join("+") + " · "
           : "";
         this.sessionLabel = `无限出题 · ${chName}${modeName}`;
+        this.currentLevelId = null;
         this.startSession();
         break;
       }
@@ -100,6 +122,9 @@ export class PracticeViewManager {
         break;
       case "runPlayground":
         await this.runPlayground();
+        break;
+      case "askTeacher":
+        this.panel?.webview.postMessage({ cmd: "teacherReply", html: askTeacher(msg.text) });
         break;
       case "answer":
         this.results.set(msg.qIdx, msg.correct);
@@ -131,7 +156,25 @@ export class PracticeViewManager {
     if (this.recentHashes.length > 60) {
       this.recentHashes = this.recentHashes.slice(-60);
     }
+    // 关卡练习：把本 session 的指纹也写进该关的持久化记录（滚动窗口 60）
+    if (this.currentLevelId) {
+      const seen = this.getLevelSeen(this.currentLevelId);
+      for (const q of this.questions) {
+        seen.push(JSON.stringify([q.type, q.q, q.code, q.expected]));
+      }
+      this.saveLevelSeen(this.currentLevelId, seen.slice(-60));
+    }
     this.renderQuiz();
+  }
+
+  /** 读取某关最近做过的题指纹（globalState 持久化） */
+  private getLevelSeen(levelId: string): string[] {
+    return this.ctx.globalState.get<string[]>(`pyland.practiceSeen.${levelId}`) || [];
+  }
+
+  /** 写入某关最近做过的题指纹 */
+  private saveLevelSeen(levelId: string, hashes: string[]): void {
+    void this.ctx.globalState.update(`pyland.practiceSeen.${levelId}`, hashes);
   }
 
   /** 创建/打开 code 题练习文件 */
@@ -228,7 +271,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
     }
     const filePath = path.join(wsFolder.uri.fsPath, "playground.py");
     if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, "# PyLand 自由编码台——随便写，Ctrl+F5 跑起来\n# 试试：\n# print('hello')\n\n", "utf8");
+      fs.writeFileSync(filePath, "# PyLand 自由编码台——随便写，点「▶ 立即运行」跑起来\n# 不会写？回训练场菜单问「🧙 模拟老师」，大白话描述想要的效果就行\n# 试试：\n# print('hello')\n\n", "utf8");
     }
     const doc = await vscode.workspace.openTextDocument(filePath);
     await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
@@ -324,6 +367,34 @@ ${quizCSS()}
 }
 .mode-card h2 { font-size: 16px; color: var(--accent); margin-bottom: 8px; }
 .mode-card .desc { font-size: 13px; color: var(--vscode-descriptionForeground); margin-bottom: 12px; }
+
+/* 模拟老师 */
+.teacher-row { display: flex; gap: 8px; }
+.teacher-input {
+  flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg2); color: var(--fg); font-size: 13px; font-family: inherit;
+}
+.teacher-input:focus { outline: 1px solid var(--accent2); }
+.t-replies { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.t-q {
+  font-size: 13px; color: var(--fg); background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 10px 10px 10px 2px;
+  padding: 8px 12px; margin-left: 24px;
+}
+.t-reply {
+  border: 1px solid var(--border); border-radius: 10px 10px 2px 10px;
+  padding: 10px 14px; margin-right: 24px; background: var(--bg2);
+}
+.t-head { font-size: 14px; font-weight: bold; color: var(--accent); }
+.t-chapter { font-size: 12px; color: var(--vscode-descriptionForeground); margin: 4px 0 8px; }
+.t-label { font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 6px; }
+.t-code {
+  font-family: var(--vscode-editor-font-family, Consolas, monospace); font-size: 12.5px;
+  background: rgba(0,0,0,.25); border-radius: 6px; padding: 8px 10px; margin: 4px 0;
+  white-space: pre; overflow-x: auto; color: var(--fg);
+}
+.t-tip { font-size: 12.5px; color: var(--accent2); margin-top: 8px; }
+.t-body { font-size: 13px; line-height: 1.7; }
 .gen-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .gen-btn {
   background: var(--accent2); color: #fff; border: none; border-radius: 6px;
@@ -416,7 +487,7 @@ ${quizCSS()}
 
 <div class="mode-card">
   <h2>📖 关卡针对性练习</h2>
-  <div class="desc">从指定关卡的原题里随机抽 ${PRACTICE_COUNT} 题乱序练。哪关薄弱练哪关。</div>
+  <div class="desc">从指定关卡的原题里抽 ${PRACTICE_COUNT} 题——重刷优先出没做过的题，新题出完自动用本章节变式题补足，告别背答案。</div>
   ${chaptersHTML}
 </div>
 
@@ -430,11 +501,41 @@ ${quizCSS()}
   <div class="hint-line">建议：改完代码按 Ctrl+S 保存，再点「▶ 立即运行」看结果。</div>
 </div>
 
+<div class="mode-card">
+  <h2>🧙 模拟老师</h2>
+  <div class="desc">想实现什么效果但不知道用哪个知识点？用大白话描述，老师告诉你语法、给示例。已学的标注章节，没学的当预告。</div>
+  <div class="teacher-row">
+    <input type="text" id="teacherInput" class="teacher-input" placeholder="例：我想让一段代码重复执行 5 次"
+      onkeydown="if (event.key === 'Enter') askTeacherBtn()" />
+    <button class="gen-btn warm" onclick="askTeacherBtn()">请教</button>
+  </div>
+  <div class="t-replies" id="teacherReplies"></div>
+</div>
+
 <script>
 const vscode = acquireVsCodeApi();
 function startLevelPractice(levelId) { vscode.postMessage({ cmd: 'startLevelPractice', levelId }); }
 function openPlayground() { vscode.postMessage({ cmd: 'openPlayground' }); }
 function runPlayground() { vscode.postMessage({ cmd: 'runPlayground' }); }
+
+/* 模拟老师 */
+function askTeacherBtn() {
+  const inp = document.getElementById('teacherInput');
+  const text = (inp.value || '').trim();
+  if (!text) return;
+  const replies = document.getElementById('teacherReplies');
+  replies.insertAdjacentHTML('afterbegin',
+    '<div class="t-q">🧑‍🎓 ' + text.replace(/</g, '&lt;') + '</div>');
+  vscode.postMessage({ cmd: 'askTeacher', text });
+  inp.value = '';
+}
+window.addEventListener('message', ev => {
+  const m = ev.data;
+  if (m && m.cmd === 'teacherReply') {
+    const replies = document.getElementById('teacherReplies');
+    if (replies) replies.insertAdjacentHTML('afterbegin', m.html);
+  }
+});
 
 /* 无限出题器：chip 状态管理 + 实时预览 */
 const __genState = { mode: 'all', chapters: [] };

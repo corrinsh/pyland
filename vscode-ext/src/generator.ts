@@ -538,8 +538,23 @@ export function genBatch(
   return out;
 }
 
-/** 从指定关卡的原题里随机抽题（针对性练习用） */
-export function pickFromLevel(questions: Question[], count: number): Question[] {
-  const shuffled = shuffle(questions);
-  return shuffled.slice(0, Math.min(count, shuffled.length));
+/** 从指定关卡的原题里随机抽题（针对性练习用）。
+ *  优先出"最近没做过"的题（按指纹去重），不够时再用做过的题补齐。
+ *  @returns questions: 抽出的题；freshCount: 其中多少是最近没做过的
+ */
+export function pickFromLevel(
+  questions: Question[],
+  count: number,
+  recentHashes: string[] = [],
+): { questions: Question[]; freshCount: number } {
+  const seen = new Set(recentHashes);
+  const isOld = (q: Question) => seen.has(genHash(q));
+  const fresh = shuffle(questions.filter(q => !isOld(q)));
+  const old = shuffle(questions.filter(q => isOld(q)));
+  const out = fresh.slice(0, count);
+  let i = 0;
+  while (out.length < count && i < old.length) {
+    out.push(old[i++]);
+  }
+  return { questions: out, freshCount: Math.min(fresh.length, count) };
 }
