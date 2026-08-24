@@ -208,7 +208,7 @@ body{
          blank(填空) / order(代码排序) / code(实操编程·真代码执行)
    code 题字段：q(任务描述) / starter(起始代码，可省) /
                 expected(期望输出，按行比对) / explain(解析)
-   —— code 题靠 Pyodide（跑在浏览器里的真 Python 引擎）执行判定，
+   —— code 题靠 Skulpt（跑在浏览器里的真 Python 引擎）执行判定，
       需要联网，首次加载约 10MB，之后有缓存。
    UI 逻辑在下面 GAME 区，不用碰。
    ===================================================================== */
@@ -451,7 +451,7 @@ const COURSES = [
     story:"村口的史莱姆王拦住了去路，它浑身果冻般的身体里封印着第一章的所有咒语。“答对我全部的问题，我就认你做 PyLand 的见习代码术士。答错……也没事，你可以重试，但我可要嘲笑你了。”",
     teach:[
       "Boss 战大部分没有新知识——全是你学过的：print、变量、input、数据类型。",
-      "新增「实操编程」题：你写的代码会被真的 Python 引擎（Pyodide）运行，输出和期望一模一样才算过。报错不扣分随便试，输出错了才计一次失误。",
+      "新增「实操编程」题：你写的代码会被真的 Python 引擎（Skulpt）运行，输出和期望一模一样才算过。报错不扣分随便试，输出错了才计一次失误。",
       "运算全家桶（今天多认识三个）：+ - * / 老四样；// 整除（7 // 2 = 3）；% 取余数（7 % 2 = 1）；** 乘方（2 ** 3 = 8）。",
       "复习清单①print 三要素：全小写、英文括号、文字加引号。",
       "复习清单②变量：先造再用；起名全小写加下划线；b = a 抄的是值。",
@@ -636,6 +636,7 @@ function renderCover(){
         : `<button class="btn primary" onclick="go('map')">开始冒险</button>`}
     </div>
   </div>`;
+  loadSkulpt();   // 引擎后台预热——封面加载完时引擎已就绪，进入实操题零等待
 }
 
 function renderMap(){
@@ -725,32 +726,39 @@ function renderTeach(l){
 
 const TYPE_LABEL = { choice:"单选", judge:"判断", predict:"预测输出", blank:"填空", order:"排序", code:"实操编程 ⚡" };
 
-/* ---------- Pyodide 真代码引擎 ---------- */
-const PYODIDE_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
-let pyodidePromise = null;
-function getPyodide(){
-  if(!pyodidePromise){
-    pyodidePromise = new Promise((resolve,reject)=>{
-      const s = document.createElement("script");
-      s.src = PYODIDE_URL + "pyodide.js";
-      s.onload = async ()=>{ try{ resolve(await loadPyodide({indexURL:PYODIDE_URL})); }catch(e){ pyodidePromise=null; reject(e); } };
-      s.onerror = ()=>{ pyodidePromise=null; reject(new Error("引擎脚本加载失败")); };
-      document.head.appendChild(s);
-    });
-  }
-  return pyodidePromise;
+/* ---------- Skulpt 真代码引擎（教学专用，约 600KB，加载 1-3 秒） ---------- */
+const SKULPT_URL = "https://cdn.jsdelivr.net/npm/skulpt@0.11.0/dist/skulpt.min.js";
+let skulptReady = null;
+function loadSkulpt(){
+  if(skulptReady) return skulptReady;
+  skulptReady = new Promise((resolve, reject)=>{
+    if(typeof Sk !== "undefined"){ resolve(); return; }
+    const s = document.createElement("script");
+    s.src = SKULPT_URL;
+    s.onload = ()=>resolve();
+    s.onerror = ()=>{ skulptReady = null; reject(new Error("Skulpt 加载失败")); };
+    document.head.appendChild(s);
+  });
+  return skulptReady;
 }
 async function runPythonCode(code){
-  const py = await getPyodide();
+  await loadSkulpt();
   const lines = [];
-  py.setStdout({batched:t=>lines.push(t)});
-  py.setStderr({batched:t=>lines.push(t)});
-  let err = null;
-  const ns = py.globals.get("dict")();   // 每次独立命名空间，变量不互相污染
-  try{ py.runPython(code, {globals:ns}); }
-  catch(e){ err = String(e.message||e); }
-  finally{ try{ ns.destroy(); }catch(_){} }
-  return { out: lines.join("\n"), err };
+  const modName = "py" + Date.now() + Math.floor(Math.random()*1000);  // 每题独立模块名，变量不互相污染
+  Sk.configure({
+    output: t => lines.push(t),
+    read: x => {
+      if(Sk.builtinFiles === undefined || Sk.builtinFiles["files"][x] === undefined)
+        throw new Error("File not found: '" + x + "'");
+      return Sk.builtinFiles["files"][x];
+    }
+  });
+  try{
+    await Sk.misceval.asyncToPromise(() => Sk.importMainWithBody(modName, false, code, true));
+    return { out: lines.join(""), err: null };
+  } catch(e){
+    return { out: lines.join(""), err: String(e.message || e.toString() || e) };
+  }
 }
 const normOut = s => String(s).replace(/\r/g,"").split("\n").map(x=>x.replace(/[ \t　]+$/,"")).join("\n").replace(/^\n+/,"").replace(/\n+$/,"").replace(/\n{2,}/g,"\n");
 // 给「看着一样但被判错」的情况：指出哪一行第几个字符不同，并标 Unicode 编码
@@ -798,11 +806,11 @@ async function runCodeQ(){
   const code = document.getElementById("codeIn").value;
   if(!code.trim()) return;
   run.codeVal = code;               // 记住用户代码，重试不清空
-  btn.disabled = true; btn.textContent = "⏳ 首次加载 Python 引擎约 10MB，稍等…";
+  btn.disabled = true; btn.textContent = "⏳ 运行中…";
   let res;
   try{ res = await runPythonCode(code); }
   catch(e){
-    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">真代码引擎（Pyodide）需要联网加载，请检查网络后点「再试一次」。</div></div>`;
+    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">需要联网加载代码引擎（约 600KB，1-3 秒）。请检查网络后点「再试一次」。</div></div>`;
     btn.disabled = false; btn.textContent = "▶ 运行咒语"; return;
   }
   btn.disabled = false; btn.textContent = "▶ 运行咒语";
@@ -876,7 +884,7 @@ function renderQuiz(){
        <div class="btn-row"><button class="btn small primary" id="runBtn" onclick="runCodeQ()">▶ 运行咒语</button></div>
        <div id="codeOut"></div>
        <div style="font-size:12px;color:#5c5f7d;margin-top:6px;line-height:1.6">💡 真 Python 引擎 + VS Code 同款编辑器（首次联网加载）：<b>报错不扣分</b>，会标出<b>第几行是什么错</b>、编辑器里那行标红；输出不符时会标出<b>哪个字符不一样</b>。</div>`;
-    getPyodide().catch(()=>{});     // 提前在后台加载引擎
+    loadSkulpt().catch(()=>{});       // 已在 cover 预热，此处再保底一次
     upgradeToMonaco("codeIn");      // 平滑升级成 VS Code 同款编辑器
   }
   app.innerHTML = `
@@ -1457,7 +1465,7 @@ print(1 + 2 * 3)
   ${renderStatusbar()}
   <div class="screen-title">🧪 自由编码台</div>
   <div class="card">
-    <div style="font-size:13px;color:#5c5f7d;margin-bottom:10px">真 Python（Pyodide）+ VS Code 同款编辑器。报错不扣分——这里根本没有分数，放心折腾。</div>
+    <div style="font-size:13px;color:#5c5f7d;margin-bottom:10px">真 Python（Skulpt 引擎，约 600KB）+ VS Code 同款编辑器。报错不扣分——这里根本没有分数，放心折腾。</div>
     <textarea id="pgIn" class="code-input" style="min-height:210px" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(saved)}</textarea>
     <div class="btn-row">
       <button class="btn small ghost" onclick="resetPlayground()">↺ 恢复示例</button>
@@ -1470,7 +1478,7 @@ print(1 + 2 * 3)
     <button class="btn small ghost" onclick="go('map')">🗺️ 地图</button>
   </div>`;
   upgradeToMonaco("pgIn");
-  getPyodide().catch(()=>{});
+  loadSkulpt().catch(()=>{});
 }
 function resetPlayground(){ localStorage.removeItem("pyland_playground"); renderPlayground(); }
 async function runPlayground(){
@@ -1483,7 +1491,7 @@ async function runPlayground(){
   let res;
   try{ res = await runPythonCode(code); }
   catch(e){
-    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">真代码引擎（Pyodide）需要联网加载（首次约 10MB，之后有缓存），请检查网络再试。</div></div>`;
+    outBox.innerHTML = `<div class="feedback bad"><div class="fb-title">😵 引擎没连上</div><div class="fb-exp">需要联网加载代码引擎（约 600KB，1-3 秒）。请检查网络再试。</div></div>`;
     btn.disabled=false; btn.textContent="▶ 运行"; return;
   }
   btn.disabled = false; btn.textContent = "▶ 运行";
