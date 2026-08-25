@@ -172,8 +172,13 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 
     const content = header + (q.starter || "");
 
-    // 本次会话首次打开该题 → 覆盖写（题目可能因打乱而变化）；重复打开 → 保留用户代码
-    if (!fs.existsSync(filePath) || !this.active.openedInLesson.has(qIdx)) {
+    // 三态处理：
+    // ① 本 session 首次打开 → 无条件覆盖写（题目可能因打乱而变化）
+    // ② 文件不存在（用户误删/外部清理）→ 强制重建
+    // ③ 本 session 已开过 + 文件还在 → 不覆盖（保留用户代码）
+    const fileAlive = fs.existsSync(filePath);
+    const alreadyOpened = this.active.openedInLesson.has(qIdx);
+    if (!alreadyOpened || !fileAlive) {
       fs.writeFileSync(filePath, content, "utf8");
     }
     this.active.openedInLesson.add(qIdx);
@@ -201,7 +206,7 @@ ${(q.expected || "").split("\n").map((l: string) => `#   ${l}`).join("\n")}
 
     const filePath = this.active.codeFileUris.get(qIdx);
     if (!filePath || !fs.existsSync(filePath)) {
-      // 文件还没创建，先创建
+      // 文件不存在（用户误删/外部清理）→ 重新创建并打开，不让用户卡住
       await this.openCodeFile(qIdx);
     }
 
