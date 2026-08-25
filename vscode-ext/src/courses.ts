@@ -1,4 +1,5 @@
 import type { Chapter } from "./types";
+import { TUTORIALS, CHAPTER_INTROS } from "./tutorials";
 
 /* PyLand 课程数据 —— 从 HTML 版 COURSES 移植
    内容更新只改这个文件，UI 逻辑不用碰。 */
@@ -25,6 +26,7 @@ export const COURSES: Chapter[] = [
       "常见报错长相：SyntaxError 多半是引号/括号没配对，或者用了中文符号；NameError 多半是拼写错了（比如 Print）。",
       "新手心法：报错不可怕。看报错最后一行 + 检查引号括号是不是英文半角，八成的错自己就能修。",
     ],
+    tutorial: TUTORIALS.l1,
     questions: [
       { type: "choice", q: "哪句咒语能让屏幕显示「你好，PyLand」？",
         options: ['print("你好，PyLand")', 'Print("你好，PyLand")', 'print(你好，PyLand)', '你好.print("PyLand")'],
@@ -78,6 +80,7 @@ export const COURSES: Chapter[] = [
       "变量必须先造再用：print(level) 之前从没写过 level = …，会报 NameError——意思是「不认识这个名字」。",
       "==（两个等号连着）才是「等于」的判断。现在先记住长相别搞混，第二章天天用。",
     ],
+    tutorial: TUTORIALS.l2,
     questions: [
       { type: "choice", q: '执行 name = "Corrin" 之后，name 里装的是什么？',
         options: ["name 这四个字母", "Corrin 这串文字", "Corrin 外面还带引号", "会报错"],
@@ -132,6 +135,7 @@ export const COURSES: Chapter[] = [
       "交互程序的固定套路：input 收集 → int/float 转类型 → 变量做计算 → print 输出结果。四步走完就是一个小程序。",
       "记忆口诀：input 进来的都当文字。要用它算数，先过 int() / float() 这道门。",
     ],
+    tutorial: TUTORIALS.l3,
     questions: [
       { type: "choice", q: '执行 age = input("请输入年龄")，用户输入了 18。age 里装的是什么？',
         options: ["整数 18", "文字 \"18\"", "小数 18.0", "报错"], answer: 1,
@@ -180,6 +184,7 @@ export const COURSES: Chapter[] = [
       "除法 / 的结果永远是 float：10 / 2 是 5.0 不是 5。想要整数结果用整除 //：10 // 2 → 5，7 // 2 → 3（砍掉余数）。",
       "Python 没有 double 这个类型（那是 C / Java 的叫法），小数统一叫 float。",
     ],
+    tutorial: TUTORIALS.l4,
     questions: [
       { type: "choice", q: "3.14 属于哪一系元素？",
         options: ["int 整数", "float 浮点数", "str 字符串", "bool 布尔"], answer: 1,
@@ -231,6 +236,7 @@ export const COURSES: Chapter[] = [
       "稳住，先想清楚每行代码「谁先谁后、箱子里装的是什么类型」，再作答。",
       "全部首答答对 = 3星 + 额外 XP。失误了也能过，但星星会少。",
     ],
+    tutorial: TUTORIALS.l5,
     questions: [
       { type: "choice", q: "让屏幕显示「战斗开始」，哪句是对的？",
         options: ['print("战斗开始")', 'Print("战斗开始")', 'print(战斗开始)', '"战斗开始".print()'], answer: 0,
@@ -298,6 +304,7 @@ export const COURSES: Chapter[] = [
       "冒号后换行才缩进：if hp > 50: print('安全') 这种单行写法虽然合法，但新手期统一写成两行——冒号结尾、换行缩进，格式最清晰。",
       "常见报错：SyntaxError: invalid syntax 多半是忘了冒号；IndentationError: expected an indented block 是冒号后面忘了缩进。",
     ],
+    tutorial: TUTORIALS.l6,
     questions: [
       { type: "choice", q: "下面哪句代码能让程序在 hp 小于 30 时显示「危险」？",
         options: ["if hp < 30:\n    print('危险')", "if hp < 30\n    print('危险')", "if (hp < 30) { print('危险') }", "if hp < 30: then print('危险')"],
@@ -358,6 +365,7 @@ export const COURSES: Chapter[] = [
       "常见坑：elif 写成 else if（Python 不认两个词）；elif 后面忘了条件直接冒号（那是 else 的写法）。",
       "分数分级是经典应用：90+ 优秀、80+ 良好、60+ 及格、其余不及格——从高到低排，每档只写一个条件。",
     ],
+    tutorial: TUTORIALS.l7,
     questions: [
       { type: "choice", q: "score 是 75。下面代码显示什么？\nif score >= 90:\n    print('优秀')\nelif score >= 60:\n    print('及格')\nelse:\n    print('不及格')",
         options: ["优秀", "及格", "不及格", "及格和不及格都显示"],
@@ -414,6 +422,7 @@ export const COURSES: Chapter[] = [
       "and 短路：左边是 False 时右边直接不看了（已经注定 False）。or 短路：左边是 True 时右边也不看。新手知道有这回事就行。",
       "多个条件组合的读法：age >= 18 and age <= 65 读作「18 到 65 岁」。写代码时把长条件拆开来读，逻辑立刻清晰。",
     ],
+    tutorial: TUTORIALS.l8,
     questions: [
       { type: "choice", q: "print(True and False) 会显示什么？",
         options: ["True", "False", "报错", "True and False"],
@@ -472,6 +481,7 @@ export const COURSES: Chapter[] = [
       "经典套路——倒计时：while n > 0: 显示 n，然后 n -= 1，循环结束后显示「发射！」。顺序：先干活再更新，还是先更新再干活，输出完全不同。",
       "print 的 end 参数：print('x', end=' ') 让显示不换行、用空格隔开。做一行输出 1 2 3 这种效果全靠它。",
     ],
+    tutorial: TUTORIALS.l9,
     questions: [
       { type: "predict", code: "i = 1\nwhile i <= 3:\n    print(i)\n    i = i + 1", q: "运行后屏幕会显示什么？",
         options: ["1\n2\n3", "1\n2\n3\n4", "1 1 1 无限刷屏", "只显示 1"],
@@ -536,6 +546,7 @@ export const COURSES: Chapter[] = [
       "break / continue 对 for 同样有效：break 跳出整个 for，continue 跳过本轮。",
       "综合套路：for + if 是黄金组合——遍历一堆数据，条件筛选想要的。for i in range(1, 11): if i % 2 == 0: 就挑出了所有偶数。",
     ],
+    tutorial: TUTORIALS.l10,
     questions: [
       { type: "predict", code: "for i in range(3):\n    print(i)", q: "运行后屏幕会显示什么？",
         options: ["0\n1\n2", "1\n2\n3", "0\n1\n2\n3", "3"],
@@ -615,6 +626,7 @@ export const COURSES: Chapter[] = [
       "列表能加减吗：不能直接 + 数字（会报 TypeError），但 列表 + 列表 是拼接：[1, 2] + [3] 得到 [1, 2, 3]。列表 * 2 是重复：[0] * 3 得到 [0, 0, 0]。",
       "空列表：empty = []。先造个空行囊，之后 append 往里装——收集数据的经典开局。",
     ],
+    tutorial: TUTORIALS.l11,
     questions: [
       { type: "choice", q: "bag = ['药水', '剑', '盾']，bag[0] 是什么？",
         options: ["药水", "剑", "盾", "报错"],
@@ -676,6 +688,7 @@ export const COURSES: Chapter[] = [
       "列表里数最大最小求和：max(nums)、min(nums)、sum(nums) 三个内置函数，一行搞定。",
       "排序：nums.sort() 让列表从小到大原地排序（行囊里的东西按顺序摆好）。排序后原列表变了，想保留原样要先复制一份 nums2 = nums[:]。",
     ],
+    tutorial: TUTORIALS.l12,
     questions: [
       { type: "predict", code: "nums = [10, 20, 30, 40]\nprint(nums[1:3])", q: "运行后屏幕会显示什么？",
         options: ["[20, 30]", "[10, 20]", "[20, 30, 40]", "[10, 20, 30]"],
@@ -744,6 +757,7 @@ export const COURSES: Chapter[] = [
       "KeyError 长相：KeyError: 'atk'——冒号后面就是你访问的那个不存在的键。看到它就知道：键名拼错了，或者还没建。",
       "字典的 print：print(hero) 会显示 {'hp': 100, 'mp': 50}——带大括号、引号、冒号、逗号原样显示。格式对不上判错时仔细看符号。",
     ],
+    tutorial: TUTORIALS.l13,
     questions: [
       { type: "predict", code: "hero = {'hp': 100, 'mp': 50}\nprint(hero['hp'])", q: "运行后屏幕会显示什么？",
         options: ["100", "50", "hp", "报错"],
@@ -807,6 +821,7 @@ export const COURSES: Chapter[] = [
       "嵌套的阅读心法：从外往里读，一层一层剥洋葱。hero['武器']['名字'] 读作「hero 的 武器 的 名字」。",
       "改嵌套里的值：hero['武器']['攻击'] = 15 ——定位到最里层再赋值，和普通修改一个道理。",
     ],
+    tutorial: TUTORIALS.l14,
     questions: [
       { type: "predict", code: "hero = {'hp': 100, 'mp': 50}\nfor key in hero:\n    print(key)", q: "运行后屏幕会显示什么？",
         options: ["hp\nmp", "100\n50", "hp 100\nmp 50", "报错"],
@@ -870,6 +885,7 @@ export const COURSES: Chapter[] = [
       "读复杂代码的心法：从数据结构倒推。看到 for m in team: 就知道 team 是列表、m 是字典；看到 m['hp'] 就知道在取属性。结构清楚了，代码就透明了。",
       "出错时的排查顺序：先看报错最后一行（什么错）→ 再看行号（哪里错）→ 最后检查那一行的方括号、引号、键名拼写。八成问题这三步能解决。",
     ],
+    tutorial: TUTORIALS.l15,
     questions: [
       { type: "predict", code: "team = [{'hp': 100}, {'hp': 80}]\ntotal = 0\nfor m in team:\n    total += m['hp']\nprint(total)", q: "运行后屏幕会显示什么？",
         options: ["180", "100", "80", "2"],

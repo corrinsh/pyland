@@ -2,12 +2,14 @@ import * as vscode from "vscode";
 import { ChapterTreeProvider } from "./treeView";
 import { LessonViewManager } from "./lessonView";
 import { PracticeViewManager } from "./practiceView";
+import { TutorialViewManager } from "./tutorialView";
 import { ProgressManager } from "./progress";
 
 let pm: ProgressManager;
 let treeProvider: ChapterTreeProvider;
 let lessonView: LessonViewManager;
 let practiceView: PracticeViewManager;
+let tutorialView: TutorialViewManager;
 
 /** 扩展激活入口 */
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
@@ -15,6 +17,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   treeProvider = new ChapterTreeProvider(pm);
   lessonView = new LessonViewManager(ctx, pm);
   practiceView = new PracticeViewManager(ctx);
+  tutorialView = new TutorialViewManager(ctx);
 
   // 侧边栏树视图
   vscode.window.registerTreeDataProvider("pyland.chapterTree", treeProvider);
@@ -52,6 +55,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("pyland.openArena", () => {
       practiceView.openArena();
+    }),
+  );
+
+  // 命令：打开知识讲堂（可带 levelId 直接定位某关讲解）
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("pyland.openTutorial", (levelId?: string) => {
+      tutorialView.openTutorial(levelId);
     }),
   );
 
@@ -121,6 +131,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   mapItem.show();
   ctx.subscriptions.push(mapItem);
   ctx.subscriptions.push({ dispose: () => mapItem.dispose() });
+
+  // 状态栏：知识讲堂
+  const tutorialItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 55);
+  tutorialItem.text = "$(book) 知识讲堂";
+  tutorialItem.tooltip = "打开 PyLand 知识讲堂：全部知识点纯讲解，不进关卡也能看";
+  tutorialItem.command = "pyland.openTutorial";
+  tutorialItem.show();
+  ctx.subscriptions.push(tutorialItem);
+  ctx.subscriptions.push({ dispose: () => tutorialItem.dispose() });
 
   // 状态栏：检查代码
   const checkItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40);

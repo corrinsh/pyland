@@ -32,6 +32,8 @@ export interface Level {
   desc: string;
   story: string;
   teach: string[];
+  /** 知识讲堂：本关所有知识点的详细讲解（Markdown），独立浏览用 */
+  tutorial?: string;
   questions: Question[];
 }
 

@@ -3,7 +3,7 @@ import { COURSES } from "./courses";
 import type { ProgressManager } from "./progress";
 
 /** 树节点类型 */
-type NodeType = "chapter" | "lesson" | "arena";
+type NodeType = "chapter" | "lesson" | "arena" | "tutorial";
 
 interface TreeNode {
   type: NodeType;
@@ -32,6 +32,16 @@ class PyLandTreeItem extends vscode.TreeItem {
       this.command = {
         command: "pyland.openArena",
         title: "打开训练场",
+      };
+      return;
+    }
+
+    if (node.type === "tutorial") {
+      this.iconPath = new vscode.ThemeIcon("book");
+      this.description = node.desc || "";
+      this.command = {
+        command: "pyland.openTutorial",
+        title: "打开知识讲堂",
       };
       return;
     }
@@ -75,14 +85,20 @@ export class ChapterTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   getChildren(element?: TreeNode): TreeNode[] {
     if (!element) {
-      // 顶层：训练场入口 + 章节列表
+      // 顶层：知识讲堂 + 训练场入口 + 章节列表
+      const tutorial: TreeNode = {
+        type: "tutorial",
+        id: "tutorial",
+        label: "📖 知识讲堂",
+        desc: "纯讲解 · 不进关卡 · 全程无门槛",
+      };
       const arena: TreeNode = {
         type: "arena",
         id: "arena",
         label: "🏋️ 实操训练场",
         desc: "无限出题 · 关卡练习 · 自由编码",
       };
-      return [arena, ...COURSES.map(ch => ({
+      return [tutorial, arena, ...COURSES.map(ch => ({
         type: "chapter" as NodeType,
         id: ch.id,
         label: `${ch.no} · ${ch.title}`,
